@@ -3,7 +3,7 @@
 # SonarQube Installation Script for Linux with Java 17 Installation
 
 # Variables
-SONAR_VERSION="2025.1" # Replace with the desired SonarQube version
+SONAR_VERSION="9.9.1.69595" # Replace with the desired SonarQube version
 SONAR_DIR="/opt/sonarqube"
 SONAR_USER="sonarqube"
 SONAR_SERVICE="sonarqube"
