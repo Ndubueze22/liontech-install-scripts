@@ -1,33 +1,98 @@
 #!/bin/bash
-# Author: Lion Technology 
-# wsl ubuntu
-#As a good security practice, SonarQuber Server is not advised to run sonar service as a root user, 
-#so create a new user called sonar and grant sudo access to manage sonar services as follows
-# 1. create a sonar 
-sudo adduser sonar
-# 2. Grand sudo access to sonar user
- sudo echo "sonar ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/sonar
 
-cd /opt 
-sudo apt update
-sudo apt install default-jdk 
-sudo wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-7.8.zip
-##install zip : 
-sudo apt install zip
-sudo apt install unzip 
-sudo unzip sonarqube-7.8.zip
-sudo rm -rf sonarqube-7.8.zip
-sudo mv sonarqube-7.8 sonarqube
-#changing permissions:
-sudo chown -R sonar:sonar /opt/sonarqube/
-sudo chmod -R 775 /opt/sonarqube/
-sudo su - sonar
-# start sonarqube as sonar user using relative path
-sudo su - sonar  
-cd /opt/sonarqube/bin/linux-x86-64/ 
-sh sonar.sh start
-# or start sonarqube as sonar user using absolute path
-sh /opt/sonarqube/bin/linux-x86-64/sonar.sh start 
-sh /opt/sonarqube/bin/linux-x86-64/sonar.sh status
-#sh /opt/sonarqube/bin/linux-x86-64/sonar.sh start | stop | status | restart
+# SonarQube Installation Script for Linux with Java 17 Installation
 
+# Variables
+SONAR_VERSION="2025.1" # Replace with the desired SonarQube version
+SONAR_DIR="/opt/sonarqube"
+SONAR_USER="sonarqube"
+SONAR_SERVICE="sonarqube"
+JAVA_VERSION="17"
+
+# Ensure the script is run as root
+if [ "$EUID" -ne 0 ]; then
+  echo "Please run as root"
+  exit 1
+fi
+
+# Update system and install dependencies
+echo "Updating system and installing dependencies..."
+apt-get update
+apt-get install -y wget unzip
+
+# Install Java 17
+echo "Installing Java ${JAVA_VERSION}..."
+apt-get install -y openjdk-${JAVA_VERSION}-jdk
+
+# Verify Java installation
+JAVA_PATH=$(update-alternatives --list java | grep "java-${JAVA_VERSION}-openjdk")
+if [ -z "$JAVA_PATH" ]; then
+  echo "Java ${JAVA_VERSION} installation failed. Please check your system."
+  exit 1
+else
+  echo "Java ${JAVA_VERSION} installed successfully: $JAVA_PATH"
+fi
+
+# Create SonarQube user
+if ! id "$SONAR_USER" &>/dev/null; then
+  echo "Creating SonarQube user..."
+  useradd -r -d "$SONAR_DIR" -s /bin/bash "$SONAR_USER"
+  if [ $? -ne 0 ]; then
+    echo "Failed to create SonarQube user. Exiting."
+    exit 1
+  fi
+else
+  echo "User '$SONAR_USER' already exists."
+fi
+
+# Download and extract SonarQube
+echo "Downloading SonarQube..."
+wget -q "https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-${SONAR_VERSION}.zip" -O /tmp/sonarqube.zip
+
+if [ ! -d "$SONAR_DIR" ]; then
+  mkdir -p "$SONAR_DIR"
+fi
+
+echo "Extracting SonarQube..."
+unzip -q /tmp/sonarqube.zip -d /tmp/
+mv /tmp/sonarqube-${SONAR_VERSION}/* "$SONAR_DIR"
+rm -rf /tmp/sonarqube.zip /tmp/sonarqube-${SONAR_VERSION}
+
+# Set permissions
+echo "Setting permissions..."
+chown -R "$SONAR_USER:$SONAR_USER" "$SONAR_DIR"
+chmod -R 775 "$SONAR_DIR"
+
+# Configure SonarQube
+echo "Configuring SonarQube..."
+sed -i 's|#sonar.jdbc.username=|sonar.jdbc.username=sonarqube|g' "$SONAR_DIR/conf/sonar.properties"
+sed -i 's|#sonar.jdbc.password=|sonar.jdbc.password=sonarqube|g' "$SONAR_DIR/conf/sonar.properties"
+sed -i 's|#sonar.jdbc.url=jdbc:h2:tcp://localhost:9092/sonar|sonar.jdbc.url=jdbc:postgresql://localhost:5432/sonarqube|g' "$SONAR_DIR/conf/sonar.properties"
+
+# Create systemd service
+echo "Creating systemd service..."
+cat <<EOF > /etc/systemd/system/${SONAR_SERVICE}.service
+[Unit]
+Description=SonarQube service
+After=syslog.target network.target
+
+[Service]
+Type=simple
+User=${SONAR_USER}
+Group=${SONAR_USER}
+ExecStart=${SONAR_DIR}/bin/linux-x86-64/sonar.sh start
+ExecStop=${SONAR_DIR}/bin/linux-x86-64/sonar.sh stop
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload systemd and start SonarQube
+echo "Starting SonarQube service..."
+systemctl daemon-reload
+systemctl enable "$SONAR_SERVICE"
+systemctl start "$SONAR_SERVICE"
+
+echo "SonarQube installation complete!"
+echo "Access SonarQube at http://localhost:9000"
